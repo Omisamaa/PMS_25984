@@ -1,0 +1,240 @@
+import streamlit as st
+import pandas as pd
+from backend import (
+    create_goal, read_goals, update_goal_status, delete_goal,
+    create_task, read_tasks, update_task_status,
+    create_feedback, read_feedback,
+    get_business_insights, get_employees, get_managers
+)
+from datetime import date
+
+# --- 1. User Authentication and State Management ---
+# Using session state to manage user role and selected user
+if 'user_role' not in st.session_state:
+    st.session_state.user_role = 'Employee'
+if 'selected_user_id' not in st.session_state:
+    st.session_state.selected_user_id = None
+if 'selected_user_name' not in st.session_state:
+    st.session_state.selected_user_name = None
+
+# --- 2. Sidebar and Navigation ---
+st.sidebar.title("User Selection")
+roles = ["Manager", "Employee"]
+st.session_state.user_role = st.sidebar.radio("Select your role:", roles)
+
+if st.session_state.user_role == "Manager":
+    managers = get_managers()
+    manager_names = list(managers.keys())
+    selected_manager = st.sidebar.selectbox("Select Manager:", manager_names)
+    st.session_state.selected_user_id = managers[selected_manager]
+    st.session_state.selected_user_name = selected_manager
+else:
+    employees = get_employees()
+    employee_names = list(employees.keys())
+    selected_employee = st.sidebar.selectbox("Select Employee:", employee_names)
+    st.session_state.selected_user_id = employees[selected_employee]
+    st.session_state.selected_user_name = selected_employee
+
+st.title("Performance Management System")
+st.markdown(f"**Welcome, {st.session_state.selected_user_name} ({st.session_state.user_role})!**")
+
+# --- 3. Main Content - Tabs for different functionalities ---
+if st.session_state.user_role == "Manager":
+    tab1, tab2, tab3, tab4 = st.tabs(["Set Goals", "Track Progress", "Feedback", "Business Insights"])
+
+    with tab1:
+        st.header("Set and View Employee Goals")
+        
+        # CRUD for Goals
+        st.subheader("Create a New Goal")
+        employees_list = get_employees()
+        employee_names = list(employees_list.keys())
+        selected_employee_name = st.selectbox("Assign to Employee:", employee_names)
+        
+        goal_desc = st.text_area("Goal Description")
+        due_date = st.date_input("Due Date", min_value=date.today())
+        
+        if st.button("Create Goal"):
+            employee_id_to_assign = employees_list[selected_employee_name]
+            success, message = create_goal(st.session_state.selected_user_id, employee_id_to_assign, goal_desc, due_date)
+            if success:
+                st.success(message)
+            else:
+                st.error(message)
+
+        st.subheader("Manage Existing Goals")
+        goals_df = read_goals(manager_id=st.session_state.selected_user_id)
+        if not goals_df.empty:
+            st.dataframe(goals_df[['goal_id', 'description', 'due_date', 'status', 'created_at', 'employee_id']], use_container_width=True)
+            
+            # Update/Delete section
+            st.markdown("---")
+            st.subheader("Update or Delete a Goal")
+            goal_ids = goals_df['goal_id'].tolist()
+            selected_goal_id = st.selectbox("Select Goal ID to manage:", goal_ids)
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                new_status = st.selectbox(
+                    "Update Status:",
+                    ['Draft', 'In Progress', 'Completed', 'Cancelled']
+                )
+                if st.button("Update Status"):
+                    success, message = update_goal_status(selected_goal_id, new_status)
+                    if success:
+                        st.success(message)
+                    else:
+                        st.error(message)
+            with col2:
+                st.write("")
+                st.write("")
+                if st.button("Delete Goal"):
+                    success, message = delete_goal(selected_goal_id)
+                    if success:
+                        st.success(message)
+                    else:
+                        st.error(message)
+        else:
+            st.info("No goals found for this manager.")
+
+    with tab2:
+        st.header("Progress Tracking")
+        
+        st.subheader("Employee Goals")
+        goals_df = read_goals(manager_id=st.session_state.selected_user_id)
+        if not goals_df.empty:
+            for index, row in goals_df.iterrows():
+                goal_id = row['goal_id']
+                st.markdown(f"#### Goal ID: {goal_id} - {row['description']}")
+                st.write(f"Status: **{row['status']}** | Due: {row['due_date'].strftime('%Y-%m-%d')}")
+                
+                # Display tasks for the goal
+                tasks_df = read_tasks(goal_id)
+                if not tasks_df.empty:
+                    st.subheader(f"Tasks for Goal {goal_id}")
+                    for _, task_row in tasks_df.iterrows():
+                        task_id = task_row['task_id']
+                        st.write(f"- Task {task_id}: {task_row['description']} ({task_row['status']})")
+                
+                st.markdown("---")
+        else:
+            st.info("No goals to track.")
+
+    with tab3:
+        st.header("Provide Feedback")
+        goals_df = read_goals(manager_id=st.session_state.selected_user_id)
+        if not goals_df.empty:
+            goal_options = {row['goal_id']: row['description'] for _, row in goals_df.iterrows()}
+            selected_goal_id = st.selectbox("Select a Goal to give feedback on:", list(goal_options.keys()), format_func=lambda x: goal_options[x])
+            
+            feedback_text = st.text_area("Enter your feedback here:")
+            if st.button("Submit Feedback"):
+                success, message = create_feedback(selected_goal_id, st.session_state.selected_user_id, feedback_text)
+                if success:
+                    st.success(message)
+                else:
+                    st.error(message)
+        else:
+            st.info("No goals available to provide feedback.")
+
+    with tab4:
+        st.header("Business Insights")
+        insights = get_business_insights()
+        if insights:
+            st.subheader("Goal and Performance Metrics")
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Total Goals Set", insights.get('total_goals', 0))
+            col2.metric("Avg. Goal Completion Time", f"{insights.get('avg_completion_time', 0):.2f} days" if insights.get('avg_completion_time') is not None else "N/A")
+            
+            st.markdown("---")
+            st.subheader("Top Performers")
+            if insights.get('top_performer'):
+                st.success(f"Top Goal Completer: **{insights['top_performer'][0]}** with {insights['top_performer'][1]} completed goals!")
+            else:
+                st.info("Not enough data to determine a top performer.")
+
+            if insights.get('top_manager'):
+                st.info(f"Top Goal Setter: **{insights['top_manager'][0]}** with {insights['top_manager'][1]} goals set.")
+            else:
+                st.info("Not enough data to determine a top manager.")
+            
+            st.markdown("---")
+            st.subheader("Goals by Status")
+            status_df = pd.DataFrame(insights.get('goals_by_status', {}).items(), columns=['Status', 'Count'])
+            st.bar_chart(status_df.set_index('Status'))
+        else:
+            st.warning("Could not retrieve business insights. Please check database connection.")
+
+elif st.session_state.user_role == "Employee":
+    tab1, tab2, tab3 = st.tabs(["My Goals", "Progress Tracking", "Feedback History"])
+    
+    with tab1:
+        st.header("My Goals")
+        goals_df = read_goals(employee_id=st.session_state.selected_user_id)
+        if not goals_df.empty:
+            for index, row in goals_df.iterrows():
+                goal_id = row['goal_id']
+                st.markdown(f"#### Goal ID: {goal_id} - {row['description']}")
+                st.write(f"Status: **{row['status']}** | Due: {row['due_date'].strftime('%Y-%m-%d')}")
+                st.markdown("---")
+                
+                # Task management for employees
+                tasks_df = read_tasks(goal_id)
+                st.subheader(f"Tasks for Goal {goal_id}")
+                if not tasks_df.empty:
+                    st.dataframe(tasks_df[['task_id', 'description', 'status']], use_container_width=True)
+                else:
+                    st.info("No tasks logged yet.")
+                
+                # Add a new task
+                with st.expander("Log a New Task"):
+                    new_task_desc = st.text_area(f"Describe a task for Goal {goal_id}")
+                    if st.button(f"Log Task for Goal {goal_id}"):
+                        success, message = create_task(goal_id, new_task_desc)
+                        if success:
+                            st.success(message)
+                        else:
+                            st.error(message)
+
+    with tab2:
+        st.header("My Progress")
+        goals_df = read_goals(employee_id=st.session_state.selected_user_id)
+        if not goals_df.empty:
+            st.markdown("### Goals & Status")
+            st.bar_chart(goals_df['status'].value_counts())
+            
+            st.markdown("### Task Progress")
+            for index, row in goals_df.iterrows():
+                goal_id = row['goal_id']
+                st.subheader(f"Progress for Goal: {row['description']}")
+                tasks_df = read_tasks(goal_id)
+                if not tasks_df.empty:
+                    task_counts = tasks_df['status'].value_counts()
+                    st.write(f"Tasks for this goal: {len(tasks_df)}")
+                    
+                    # Update task status
+                    st.markdown("---")
+                    st.markdown("Update your task status:")
+                    task_options = {r['task_id']: r['description'] for _, r in tasks_df.iterrows()}
+                    selected_task_id = st.selectbox("Select Task to Update:", list(task_options.keys()), format_func=lambda x: task_options[x])
+                    new_task_status = st.radio(f"Set status for Task {selected_task_id}:", ['Not Started', 'In Progress', 'Completed'])
+                    if st.button(f"Update Task {selected_task_id}"):
+                        success, message = update_task_status(selected_task_id, new_task_status)
+                        if success:
+                            st.success(message)
+                        else:
+                            st.error(message)
+                else:
+                    st.info("No tasks to track for this goal.")
+
+    with tab3:
+        st.header("My Feedback History")
+        feedback_df = read_feedback(st.session_state.selected_user_id)
+        if not feedback_df.empty:
+            for index, row in feedback_df.iterrows():
+                st.markdown(f"**Feedback on Goal:** *{row['goal_description']}*")
+                st.write(f"**Date:** {row['created_at'].strftime('%Y-%m-%d')}")
+                st.info(f"*{row['feedback_text']}*")
+                st.markdown("---")
+        else:
+            st.info("No feedback has been provided for you yet.")
