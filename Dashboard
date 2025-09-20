@@ -1,0 +1,140 @@
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+from backend import (
+    get_business_insights,
+    read_goals,
+    get_employees,
+    get_managers
+)
+
+# --- Set Up Page Configuration ---
+st.set_page_config(
+    page_title="Performance Dashboard",
+    page_icon="📊",
+    layout="wide"
+)
+
+# --- Fetch Data (with caching for performance) ---
+@st.cache_data
+def load_data():
+    """Fetches all necessary data from the backend."""
+    goals_df = read_goals()
+    employees_map = get_employees()
+    managers_map = get_managers()
+    insights = get_business_insights()
+    return goals_df, employees_map, managers_map, insights
+
+goals_df, employees_map, managers_map, insights = load_data()
+
+# --- Title and Description ---
+st.title("📊 Performance Management Dashboard EXAM_ID 25984")
+st.markdown("A brief overview of key performance metrics, goal trends, and team insights.")
+
+if goals_df.empty:
+    st.warning("No data found. Please set some goals and tasks in the main application.")
+else:
+    # --- 1. Top-Level Metrics ---
+    st.header("Key Performance Indicators")
+    col1, col2, col3, col4 = st.columns(4)
+
+    # Use the insights dictionary for metrics
+    total_goals = insights.get('total_goals', 0)
+    avg_completion_time = insights.get('avg_completion_time')
+
+    col1.metric("Total Goals Set", total_goals)
+    col2.metric("Total Goals Completed", goals_df[goals_df['status'] == 'Completed'].shape[0])
+    col3.metric("Avg. Completion Time", f"{avg_completion_time:.2f} days" if avg_completion_time is not None else "N/A")
+    col4.metric("Goals In Progress", goals_df[goals_df['status'] == 'In Progress'].shape[0])
+
+    st.markdown("---")
+
+    # --- 2. Goal Status and Trends ---
+    st.header("Goal Status and Trends")
+    
+    # Pie chart for goal status distribution
+    status_counts = goals_df['status'].value_counts().reset_index()
+    status_counts.columns = ['Status', 'Count']
+    fig_status = px.pie(
+        status_counts,
+        values='Count',
+        names='Status',
+        title='Distribution of Goal Statuses',
+        color_discrete_sequence=px.colors.sequential.RdBu
+    )
+    st.plotly_chart(fig_status, use_container_width=True)
+
+    st.subheader("Goal Creation Trend Over Time")
+    
+    min_date = goals_df['created_at'].min().date()
+    max_date = goals_df['created_at'].max().date()
+    
+    # Fix: Check if min and max dates are the same before creating the slider
+    if min_date == max_date:
+        st.info(f"All goals were created on a single date: **{min_date}**. The date range slider is disabled.")
+        filtered_goals_df = goals_df.copy()
+    else:
+        date_range = st.slider(
+            "Select Date Range",
+            min_value=min_date,
+            max_value=max_date,
+            value=(min_date, max_date)
+        )
+        filtered_goals_df = goals_df[(goals_df['created_at'].dt.date >= date_range[0]) & (goals_df['created_at'].dt.date <= date_range[1])]
+
+    # Line chart for goals created over time
+    goals_by_month = filtered_goals_df.resample('M', on='created_at').size().reset_index(name='Count')
+    goals_by_month['created_at'] = goals_by_month['created_at'].dt.to_period('M').astype(str)
+    
+    fig_trend = px.line(
+        goals_by_month,
+        x='created_at',
+        y='Count',
+        markers=True,
+        title='Number of Goals Created per Month'
+    )
+    fig_trend.update_xaxes(title_text="Month")
+    fig_trend.update_yaxes(title_text="Number of Goals")
+    st.plotly_chart(fig_trend, use_container_width=True)
+
+    st.markdown("---")
+    
+    # --- 3. Performance by Employee and Manager ---
+    st.header("Team Performance Insights")
+
+    col5, col6 = st.columns(2)
+
+    with col5:
+        # Top Employees
+        st.subheader("Top Employees by Goals Completed")
+        # Reverse the employees_map to get name from ID
+        employees_reverse_map = {v: k for k, v in employees_map.items()}
+        completed_goals = goals_df[goals_df['status'] == 'Completed']
+        employee_performance = completed_goals['employee_id'].value_counts().reset_index()
+        employee_performance.columns = ['employee_id', 'Completed Goals']
+        employee_performance['Employee Name'] = employee_performance['employee_id'].map(employees_reverse_map)
+        
+        fig_emp = px.bar(
+            employee_performance.sort_values('Completed Goals', ascending=False).head(5),
+            x='Employee Name',
+            y='Completed Goals',
+            title='Top 5 Employees'
+        )
+        st.plotly_chart(fig_emp, use_container_width=True)
+
+    with col6:
+        # Top Managers
+        st.subheader("Top Managers by Goals Set")
+        # Reverse the managers_map to get name from ID
+        managers_reverse_map = {v: k for k, v in managers_map.items()}
+        manager_performance = goals_df['manager_id'].value_counts().reset_index()
+        manager_performance.columns = ['manager_id', 'Goals Set']
+        manager_performance['Manager Name'] = manager_performance['manager_id'].map(managers_reverse_map)
+
+        fig_man = px.bar(
+            manager_performance.sort_values('Goals Set', ascending=False).head(5),
+            x='Manager Name',
+            y='Goals Set',
+            title='Top 5 Managers'
+        )
+        st.plotly_chart(fig_man, use_container_width=True)
