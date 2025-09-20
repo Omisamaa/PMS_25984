@@ -1,0 +1,325 @@
+import psycopg2
+import os
+from datetime import datetime
+import pandas as pd
+
+# --- Database Connection and Configuration ---
+def get_db_connection():
+    """Establishes and returns a connection to the PostgreSQL database."""
+    conn = None
+    try:
+        conn = psycopg2.connect(
+            host=os.environ.get("DB_HOST", "localhost"),
+            dbname=os.environ.get("DB_NAME", "PMS"),
+            user=os.environ.get("DB_USER", "postgres"),
+            password=os.environ.get("DB_PASSWORD", "413169")
+        )
+        return conn
+    except psycopg2.Error as e:
+        print(f"Database connection error: {e}")
+        return None
+
+# --- CRUD Operations for Goals ---
+
+def create_goal(manager_id, employee_id, description, due_date):
+    """
+    Creates a new goal in the database.
+    Status is set to 'Draft' by default.
+    """
+    conn = get_db_connection()
+    if conn:
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO goals (manager_id, employee_id, description, due_date) VALUES (%s, %s, %s, %s);",
+                (manager_id, employee_id, description, due_date)
+            )
+            conn.commit()
+            return True, "Goal created successfully."
+        except psycopg2.Error as e:
+            conn.rollback()
+            return False, f"Error creating goal: {e}"
+        finally:
+            conn.close()
+    return False, "Database connection failed."
+
+def read_goals(employee_id=None, manager_id=None):
+    """
+    Retrieves goals from the database.
+    Can be filtered by employee_id or manager_id.
+    """
+    conn = get_db_connection()
+    if conn:
+        try:
+            cur = conn.cursor()
+            query = "SELECT * FROM goals"
+            params = []
+            if employee_id and manager_id:
+                query += " WHERE employee_id = %s AND manager_id = %s"
+                params = [employee_id, manager_id]
+            elif employee_id:
+                query += " WHERE employee_id = %s"
+                params = [employee_id]
+            elif manager_id:
+                query += " WHERE manager_id = %s"
+                params = [manager_id]
+            
+            query += " ORDER BY created_at DESC;"
+            cur.execute(query, params)
+            goals = cur.fetchall()
+            conn.close()
+            # Convert to DataFrame for easier handling
+            columns = [desc[0] for desc in cur.description]
+            return pd.DataFrame(goals, columns=columns)
+        except psycopg2.Error as e:
+            print(f"Error reading goals: {e}")
+            return pd.DataFrame()
+        finally:
+            conn.close()
+    return pd.DataFrame()
+
+def update_goal_status(goal_id, status):
+    """
+    Updates the status of a specific goal.
+    This action is restricted to managers in the frontend.
+    """
+    conn = get_db_connection()
+    if conn:
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "UPDATE goals SET status = %s WHERE goal_id = %s;",
+                (status, goal_id)
+            )
+            conn.commit()
+            return True, "Goal status updated successfully."
+        except psycopg2.Error as e:
+            conn.rollback()
+            return False, f"Error updating goal status: {e}"
+        finally:
+            conn.close()
+    return False, "Database connection failed."
+
+def delete_goal(goal_id):
+    """Deletes a goal from the database."""
+    conn = get_db_connection()
+    if conn:
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "DELETE FROM goals WHERE goal_id = %s;",
+                (goal_id,)
+            )
+            conn.commit()
+            return True, "Goal deleted successfully."
+        except psycopg2.Error as e:
+            conn.rollback()
+            return False, f"Error deleting goal: {e}"
+        finally:
+            conn.close()
+    return False, "Database connection failed."
+
+# --- CRUD Operations for Tasks ---
+
+def create_task(goal_id, description):
+    """Creates a new task associated with a goal."""
+    conn = get_db_connection()
+    if conn:
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO tasks (goal_id, description) VALUES (%s, %s);",
+                (goal_id, description)
+            )
+            conn.commit()
+            return True, "Task created successfully."
+        except psycopg2.Error as e:
+            conn.rollback()
+            return False, f"Error creating task: {e}"
+        finally:
+            conn.close()
+    return False, "Database connection failed."
+
+def read_tasks(goal_id):
+    """Retrieves all tasks for a given goal."""
+    conn = get_db_connection()
+    if conn:
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT * FROM tasks WHERE goal_id = %s ORDER BY created_at ASC;",
+                (goal_id,)
+            )
+            tasks = cur.fetchall()
+            conn.close()
+            columns = [desc[0] for desc in cur.description]
+            return pd.DataFrame(tasks, columns=columns)
+        except psycopg2.Error as e:
+            print(f"Error reading tasks: {e}")
+            return pd.DataFrame()
+        finally:
+            conn.close()
+    return pd.DataFrame()
+
+def update_task_status(task_id, status):
+    """Updates the status of a specific task."""
+    conn = get_db_connection()
+    if conn:
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "UPDATE tasks SET status = %s WHERE task_id = %s;",
+                (status, task_id)
+            )
+            conn.commit()
+            return True, "Task status updated successfully."
+        except psycopg2.Error as e:
+            conn.rollback()
+            return False, f"Error updating task status: {e}"
+        finally:
+            conn.close()
+    return False, "Database connection failed."
+
+# --- CRUD Operations for Feedback ---
+
+def create_feedback(goal_id, manager_id, feedback_text):
+    """Allows a manager to provide feedback on a goal."""
+    conn = get_db_connection()
+    if conn:
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO feedback (goal_id, manager_id, feedback_text) VALUES (%s, %s, %s);",
+                (goal_id, manager_id, feedback_text)
+            )
+            conn.commit()
+            return True, "Feedback submitted successfully."
+        except psycopg2.Error as e:
+            conn.rollback()
+            return False, f"Error submitting feedback: {e}"
+        finally:
+            conn.close()
+    return False, "Database connection failed."
+
+def read_feedback(employee_id):
+    """Retrieves all feedback for a specific employee."""
+    conn = get_db_connection()
+    if conn:
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT f.feedback_text, f.created_at, g.description as goal_description
+                FROM feedback f
+                JOIN goals g ON f.goal_id = g.goal_id
+                WHERE g.employee_id = %s
+                ORDER BY f.created_at DESC;
+                """,
+                (employee_id,)
+            )
+            feedback = cur.fetchall()
+            conn.close()
+            columns = ["feedback_text", "created_at", "goal_description"]
+            return pd.DataFrame(feedback, columns=columns)
+        except psycopg2.Error as e:
+            print(f"Error reading feedback: {e}")
+            return pd.DataFrame()
+        finally:
+            conn.close()
+    return pd.DataFrame()
+
+# --- Business Insights ---
+
+def get_business_insights():
+    """Provides key business insights using SQL aggregates."""
+    conn = get_db_connection()
+    if conn:
+        try:
+            cur = conn.cursor()
+            
+            # Insight 1: Total number of goals set
+            cur.execute("SELECT COUNT(*) FROM goals;")
+            total_goals = cur.fetchone()[0]
+
+            # Insight 2: Average time to complete a goal (in days)
+            cur.execute("SELECT AVG(EXTRACT(DAY FROM completed_at - created_at)) FROM goals WHERE status = 'Completed';")
+            avg_completion_time = cur.fetchone()[0]
+
+            # Insight 3: Number of goals per status
+            cur.execute("SELECT status, COUNT(*) FROM goals GROUP BY status;")
+            goals_by_status = {row[0]: row[1] for row in cur.fetchall()}
+
+            # Insight 4: Employee with the most goals completed
+            cur.execute(
+                """
+                SELECT e.name, COUNT(g.goal_id) AS completed_goals
+                FROM goals g
+                JOIN employees e ON g.employee_id = e.employee_id
+                WHERE g.status = 'Completed'
+                GROUP BY e.name
+                ORDER BY completed_goals DESC
+                LIMIT 1;
+                """
+            )
+            top_performer = cur.fetchone()
+
+            # Insight 5: Manager with the most goals set
+            cur.execute(
+                """
+                SELECT m.name, COUNT(g.goal_id) AS goals_set
+                FROM goals g
+                JOIN managers m ON g.manager_id = m.manager_id
+                GROUP BY m.name
+                ORDER BY goals_set DESC
+                LIMIT 1;
+                """
+            )
+            top_manager = cur.fetchone()
+
+            conn.close()
+            return {
+                "total_goals": total_goals,
+                "avg_completion_time": avg_completion_time,
+                "goals_by_status": goals_by_status,
+                "top_performer": top_performer,
+                "top_manager": top_manager
+            }
+
+        except psycopg2.Error as e:
+            print(f"Error getting insights: {e}")
+            return None
+        finally:
+            conn.close()
+    return None
+
+def get_employees():
+    """Reads all employees from the database."""
+    conn = get_db_connection()
+    if conn:
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT employee_id, name FROM employees;")
+            employees = cur.fetchall()
+            return {row[1]: row[0] for row in employees}
+        except psycopg2.Error as e:
+            print(f"Error fetching employees: {e}")
+            return {}
+        finally:
+            conn.close()
+    return {}
+
+def get_managers():
+    """Reads all managers from the database."""
+    conn = get_db_connection()
+    if conn:
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT manager_id, name FROM managers;")
+            managers = cur.fetchall()
+            return {row[1]: row[0] for row in managers}
+        except psycopg2.Error as e:
+            print(f"Error fetching managers: {e}")
+            return {}
+        finally:
+            conn.close()
+    return {}
