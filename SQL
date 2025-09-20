@@ -1,0 +1,98 @@
+-- Drop tables if they exist to allow for clean setup
+DROP TABLE IF EXISTS feedback CASCADE;
+DROP TABLE IF EXISTS tasks CASCADE;
+DROP TABLE IF EXISTS goals CASCADE;
+DROP TABLE IF EXISTS employees CASCADE;
+DROP TABLE IF EXISTS managers CASCADE;
+
+-- Create Managers table
+CREATE TABLE managers (
+manager_id SERIAL PRIMARY KEY,
+name VARCHAR(255) NOT NULL,
+email VARCHAR(255) UNIQUE NOT NULL
+);
+
+-- Create Employees table
+CREATE TABLE employees (
+employee_id SERIAL PRIMARY KEY,
+name VARCHAR(255) NOT NULL,
+email VARCHAR(255) UNIQUE NOT NULL,
+manager_id INT REFERENCES managers(manager_id)
+);
+
+-- Create Goals table
+CREATE TABLE goals (
+goal_id SERIAL PRIMARY KEY,
+manager_id INT NOT NULL REFERENCES managers(manager_id),
+employee_id INT NOT NULL REFERENCES employees(employee_id),
+description TEXT NOT NULL,
+due_date DATE NOT NULL,
+status VARCHAR(50) NOT NULL DEFAULT 'Draft' CHECK (status IN ('Draft', 'In Progress', 'Completed', 'Cancelled')),
+created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+completed_at TIMESTAMP WITH TIME ZONE
+);
+
+-- Create Tasks table
+CREATE TABLE tasks (
+task_id SERIAL PRIMARY KEY,
+goal_id INT NOT NULL REFERENCES goals(goal_id),
+description TEXT NOT NULL,
+status VARCHAR(50) NOT NULL DEFAULT 'Not Started' CHECK (status IN ('Not Started', 'In Progress', 'Completed')),
+created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create Feedback table
+CREATE TABLE feedback (
+feedback_id SERIAL PRIMARY KEY,
+goal_id INT NOT NULL REFERENCES goals(goal_id),
+manager_id INT NOT NULL REFERENCES managers(manager_id),
+feedback_text TEXT NOT NULL,
+created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Insert sample data for testing
+INSERT INTO managers (name, email) VALUES
+('Alice Johnson', 'alice.j@example.com'),
+('Bob Williams', 'bob.w@example.com');
+
+INSERT INTO employees (name, email, manager_id) VALUES
+('Charlie Davis', 'charlie.d@example.com', 1),
+('Diana Evans', 'diana.e@example.com', 1),
+('Frank Green', 'frank.g@example.com', 2);
+
+-- Automated feedback trigger
+-- This trigger automatically adds a feedback entry when a goal's status changes to 'Completed'
+CREATE OR REPLACE FUNCTION automated_feedback()
+RETURNS TRIGGER AS $$
+BEGIN
+IF NEW.status = 'Completed' AND OLD.status != 'Completed' THEN
+INSERT INTO feedback (goal_id, manager_id, feedback_text)
+VALUES (
+NEW.goal_id,
+NEW.manager_id,
+'Automated feedback: This goal was successfully completed on time!'
+);
+-- Update the completed_at timestamp
+NEW.completed_at = CURRENT_TIMESTAMP;
+END IF;
+RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_automated_feedback
+AFTER UPDATE ON goals
+FOR EACH ROW
+EXECUTE FUNCTION automated_feedback();
+
+-- Initial sample goals and tasks
+INSERT INTO goals (manager_id, employee_id, description, due_date, status) VALUES
+(1, 1, 'Complete project proposal for new product launch.', '2025-12-31', 'In Progress'),
+(1, 2, 'Achieve 15% increase in customer satisfaction score.', '2025-11-15', 'Completed'),
+(2, 3, 'Develop and deploy a new marketing landing page.', '2025-10-31', 'In Progress');
+
+INSERT INTO tasks (goal_id, description, status) VALUES
+(1, 'Research market trends', 'Completed'),
+(1, 'Draft proposal outline', 'In Progress'),
+(2, 'Analyze customer feedback', 'Completed'),
+(2, 'Implement feedback-driven changes', 'Completed'),
+(3, 'Design landing page wireframe', 'Not Started');
